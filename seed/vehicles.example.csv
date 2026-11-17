@@ -1,0 +1,9 @@
+truck_code,unit,vin,plate,year,make,model,registration_expires,pulls_trailer,diagram,trailer
+T101,U101,SAMPLE00000000101,DEMO101,2024,Ford,F-250,2027-03-31,true,Pickup truck,Utility trailer
+T102,U102,SAMPLE00000000102,DEMO102,2023,Chevrolet,Silverado 2500,2027-06-30,true,Pickup truck,Utility trailer
+T103,U103,SAMPLE00000000103,DEMO103,2022,Toyota,Tacoma,2027-01-31,false,Pickup truck,
+T104,U104,SAMPLE00000000104,DEMO104,2025,Ram,2500,2027-09-30,true,Pickup truck,Utility trailer
+T105,U105,SAMPLE00000000105,DEMO105,2021,Nissan,Frontier,2026-12-31,false,Pickup truck,
+T106,U106,SAMPLE00000000106,DEMO106,2023,Isuzu,NPR dump truck,2027-04-30,false,Dump truck,
+T107,U107,SAMPLE00000000107,DEMO107,2020,Ford,F-150,2026-08-31,false,Pickup truck,
+T108,U108,SAMPLE00000000108,DEMO108,2024,Chevrolet,Silverado 1500,2027-02-28,true,Pickup truck,Utility trailer

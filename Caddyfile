@@ -1,0 +1,15 @@
+{
+	# Trust X-Forwarded-* from cloudflared (it runs on the Docker network),
+	# so the app knows the original request was HTTPS.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+	request_body {
+		max_size 25MB
+	}
+	reverse_proxy app:3000
+}

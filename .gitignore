@@ -1,0 +1,30 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies and builds
+node_modules/
+dist/
+build/
+.svelte-kit/
+coverage/
+
+# Runtime data (Docker volumes, local dev)
+data/
+uploads/
+backups/
+backups-*/
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local-only files
+.claude/launch.json
+
+# Your real fleet (copy seed/vehicles.example.csv to start). Kept out of git so VINs and plates stay private.
+seed/vehicles.csv

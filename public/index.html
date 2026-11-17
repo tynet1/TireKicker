@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TireKicker">
+<meta name="theme-color" content="#2f6b3a">
+<title>TireKicker</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header class="top">
+  <a class="iconbtn" id="backBtn" href="#/" hidden aria-label="Back">‹ Back</a>
+  <img class="hdrlogo" id="hdrLogo" alt="" hidden>
+  <h1 id="title">TireKicker<div class="sub">Your Company</div></h1>
+  <span id="headActions" class="row" style="flex-wrap:nowrap"></span>
+</header>
+<main class="wrap" id="app"><div class="empty">Loading…</div></main>
+<div class="netbar" id="netbar" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

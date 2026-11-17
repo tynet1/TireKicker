@@ -1,0 +1,33 @@
+{
+  "name": "tirekicker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Phone-first vehicle inspections: checklist, damage pins, photos, signatures, maintenance log and PDF export",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "dev": "node --watch --env-file-if-exists=.env.local src/server.ts",
+    "migrate": "node --env-file-if-exists=.env.local src/cli/migrate.ts",
+    "user": "node --env-file-if-exists=.env.local src/cli/user.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/multipart": "^10.1.8",
+    "@fastify/rate-limit": "^11.2.2",
+    "@fastify/static": "^10.1.10",
+    "fastify": "^5.12.8",
+    "pg": "^8.23.1",
+    "playwright": "^1.65.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "typescript": "^7.0.2"
+  }
+}
