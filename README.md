@@ -67,6 +67,9 @@ adds those 8 fake trucks on start. For a real install, start with your own fleet
 `seed/vehicles.csv` (it's gitignored) or add them in Admin. Sample trucks would otherwise have to be retired and then
 deleted through the trash.
 
+**First hour after installing:** [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) walks you from an empty install to
+the first inspection (people, trucks, diagrams, checklists, phones, a test run, backups).
+
 Production setup (HTTPS, Cloudflare Tunnel, backups, restore, updates, firewall): [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Configuration
@@ -153,7 +156,8 @@ db/migrations/       numbered SQL migrations, applied automatically on start (ne
 seed/                vehicles.example.csv: the format for loading trucks from seed/vehicles.csv
 scripts/             backup.sh (nightly, run by the backup container), restore.sh, burnin.ts (burn-in test)
 test/                database tests against a real Postgres, plus browser-file, CSV and zip checks
-docs/                DEPLOY.md (production setup, backups, restore, updates), PHASE3-REVIEW.md (review and burn-in)
+docs/                GETTING-STARTED.md (first hour), DEPLOY.md (production setup, backups, restore,
+                     updates), PHASE3-REVIEW.md (review and burn-in)
 ```
 
 ## Contributing and security

@@ -54,7 +54,9 @@ password. Then go to **Menu → Admin** and:
 1. Set the company name, colors and logo under **Branding**.
 2. Add crew users (name + 4–6 digit PIN) and supervisors (email + password).
 3. Add trucks and upload a diagram for each model (or use the bundled pickup, dump truck and trailer drawings).
-4. Review the checklist under **Checklist**.
+4. Review the checklists under **Checklist**.
+
+[GETTING-STARTED.md](GETTING-STARTED.md) walks through these steps in detail, plus phones, a test run and backups.
 
 Users can also be added from the command line:
 
