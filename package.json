@@ -1,6 +1,6 @@
 {
   "name": "tirekicker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Phone-first vehicle inspections: checklist, damage pins, photos, signatures, maintenance log and PDF export",
   "license": "MIT",

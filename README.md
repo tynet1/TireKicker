@@ -53,11 +53,15 @@ equipment), **admin** (everything). The full behavior is in [SPEC.md](SPEC.md).
 Needs Docker with the compose plugin.
 
 ```bash
-git clone https://github.com/tynet1/TireKicker.git
+git clone --branch v0.2.0 https://github.com/tynet1/TireKicker.git    # the latest release
 cd TireKicker
 cp .env.example .env    # set POSTGRES_PASSWORD, ADMIN_EMAIL, ADMIN_PASSWORD, SITE_ADDRESS, TZ
 docker compose up -d --build
 ```
+
+That builds the app from source. To use the prebuilt release image instead (faster, and how updates are meant to
+work), uncomment `COMPOSE_FILE=docker-compose.yml:compose.release.yml` in `.env` first. Releases and what changed in
+each: [CHANGELOG.md](CHANGELOG.md) and the [releases page](https://github.com/tynet1/TireKicker/releases).
 
 Open `http://localhost/` (or your domain) and sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`. Then, under
 **Menu → Admin**, set your branding, add crew users with PINs, and add trucks.
@@ -157,7 +161,8 @@ seed/                vehicles.example.csv: the format for loading trucks from se
 scripts/             backup.sh (nightly, run by the backup container), restore.sh, burnin.ts (burn-in test)
 test/                database tests against a real Postgres, plus browser-file, CSV and zip checks
 docs/                GETTING-STARTED.md (first hour), DEPLOY.md (production setup, backups, restore,
-                     updates), PHASE3-REVIEW.md (review and burn-in)
+                     updates), RELEASING.md (cutting a release), PHASE3-REVIEW.md (review and burn-in)
+.github/workflows/  CI (tests on every push) and Release (image + GitHub Release on a version tag)
 ```
 
 ## Contributing and security

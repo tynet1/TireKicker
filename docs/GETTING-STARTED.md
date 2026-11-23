@@ -58,10 +58,11 @@ Two ways:
   field; add unit, VIN, plate, year/make/model and the registration expiration date if you have them. The VIN must be
   17 characters.
 - **The whole fleet at once:** copy `seed/vehicles.example.csv` to `seed/vehicles.csv`, replace the sample rows with
-  your trucks (same columns; `diagram` and `trailer` name a truck diagram and a trailer type), then rebuild:
-  `docker compose up -d --build app`. On every start the app adds trucks from that file that it doesn't have yet,
-  matched by Truck ID; it never changes a truck that already exists, so later edits made in Admin are safe. The file
-  is gitignored, so your VINs and plates stay out of git.
+  your trucks (same columns; `diagram` and `trailer` name a truck diagram and a trailer type), then restart the app:
+  `docker compose up -d --build app` from source, or `docker compose restart app` with the release image. On every
+  start the app adds trucks from that file that it doesn't have yet, matched by Truck ID; it never changes a truck
+  that already exists, so later edits made in Admin are safe. The file is gitignored, so your VINs and plates stay out
+  of git.
 
 Check every truck once in **Admin → Trucks**: set its **Trailer type**, or **No trailer** if it doesn't normally pull one
 (the inspection form turns the trailer section on for trucks that do), and its registration date (the app warns 30

@@ -21,12 +21,22 @@ sudo usermod -aG docker $USER   # log out and back in afterwards
 
 ## 2. Get the code and configure it
 
+Use the latest release ([releases page](https://github.com/tynet1/TireKicker/releases); v0.2.0 here):
+
 ```bash
-git clone https://github.com/tynet1/TireKicker.git
+git clone --branch v0.2.0 https://github.com/tynet1/TireKicker.git
 cd TireKicker
 cp .env.example .env
 nano .env
 ```
+
+There are two ways to run the app; pick one in `.env`:
+
+- **Release image (recommended):** set `COMPOSE_FILE=docker-compose.yml:compose.release.yml` (on Windows, separate
+  them with `;`). Docker pulls the prebuilt, tested image for the version you checked out. Nothing is built on the
+  server, and updates take seconds.
+- **From source:** leave `COMPOSE_FILE` unset, and Docker builds the app from the code (a few minutes). Use this if you
+  change the code.
 
 In `.env` set at least:
 
@@ -37,13 +47,13 @@ In `.env` set at least:
 - `BACKUP_DIR`: a folder on a **different disk or a mounted network share** (see section 5)
 
 Optionally load your fleet: copy `seed/vehicles.example.csv` to `seed/vehicles.csv` and replace the sample rows with
-your trucks before the first start. Trucks can also be added in **Admin → Trucks**. Trucks are never deleted (only
-retired), so don't load the sample rows into a real install.
+your trucks before the first start. Trucks can also be added in **Admin → Trucks**. Don't load the sample rows into a
+real install: trucks can only be retired and then deleted through the trash.
 
 ## 3. Start it
 
 ```bash
-docker compose up -d --build
+docker compose up -d --build     # pulls the release image, or builds from source
 docker compose ps                 # all services "running", app "healthy" after ~30s
 docker compose logs -f app        # migrations, "created admin account", "added N truck(s)" if you loaded a fleet
 ```
@@ -134,19 +144,42 @@ COMPOSE_PROJECT_NAME=tirekicker-test BACKUP_DIR=./backups-test docker compose do
 
 ## 6. Updating
 
-Take a labeled backup first, then pull and rebuild:
+Read the new version's notes on the [releases page](https://github.com/tynet1/TireKicker/releases) or in
+`CHANGELOG.md` first: they say which database migrations run and anything you need to do.
+
+**With the release image:** take a labeled backup, check out the new release, pull its image and restart.
 
 ```bash
 docker compose exec -T backup /bin/sh /backup.sh before-update
-git pull --ff-only
+git fetch --tags
+git checkout v0.3.0                       # the release you're updating to
+docker compose pull app
+docker compose up -d
+```
+
+This takes under a minute. Each release's `compose.release.yml` names its own image, so checking out the tag picks
+the right one.
+
+**From source:** the same backup, then check out the release (or `git pull --ff-only` to follow `main`) and rebuild:
+
+```bash
+docker compose exec -T backup /bin/sh /backup.sh before-update
+git fetch --tags
+git checkout v0.3.0
 nohup sh -c 'docker compose up -d --build app > ~/tirekicker-deploy.log 2>&1; echo EXIT=$? >> ~/tirekicker-deploy.log' &
 ```
 
 The rebuild takes a few minutes. Running it under `nohup` means a dropped SSH connection can't cancel it halfway;
-`tail ~/tirekicker-deploy.log` shows `EXIT=0` when it's done, and `docker compose ps` shows the app `healthy` about 30
-seconds later. Until the new container starts, the old one keeps serving. Database migrations run automatically when
-the app starts (`docker compose logs app | grep migration`). Phones pick up the new version the next time the app is
-opened (the service worker refreshes when the files change).
+`tail ~/tirekicker-deploy.log` shows `EXIT=0` when it's done.
+
+Either way, `docker compose ps` shows the app `healthy` about 30 seconds later; until the new container starts, the
+old one keeps serving. Database migrations run automatically when the app starts
+(`docker compose logs app | grep migration`). Phones pick up the new version the next time the app is opened (the
+service worker refreshes when the files change).
+
+**Going back:** if the new version added migrations, an older version isn't made for the updated database. Don't just
+check out the old tag; restore the `before-update` backup (section 5), then check out the old tag and start it. If the
+release added no migrations (the notes say so), checking out the old tag and starting it again is enough.
 
 ## Firewall
 

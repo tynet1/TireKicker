@@ -1,0 +1,15 @@
+# Run the published release image instead of building the app from source.
+#
+# Turn it on in .env:
+#   COMPOSE_FILE=docker-compose.yml:compose.release.yml     (on Windows, separate them with ; instead of :)
+#
+# Each release tag pins its own image below, so updating is: check out the new tag, pull, restart
+# (docs/DEPLOY.md §6). TIREKICKER_VERSION in .env overrides the pin. Needs Docker Compose 2.24 or newer (!reset).
+services:
+  app:
+    image: ghcr.io/tynet1/tirekicker:${TIREKICKER_VERSION:-0.2.0}
+    build: !reset null
+    pull_policy: missing
+    volumes:
+      # Your fleet file, if you use one (seed/vehicles.csv): read on every start, like a source build.
+      - ./seed:/app/seed:ro
