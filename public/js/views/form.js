@@ -107,9 +107,10 @@ function newDraft(v, last) {
     newObs: "",
     comments: "",
     answers: {},
-    trailerOn: !!v.pulls_trailer,
-    trailerNo: li?.trailer_inspected ? li.trailer_number_text || "" : "",
-    trailerPlate: li?.trailer_inspected ? li.trailer_plate_text || "" : "",
+    // The trailer on the truck now (Fleet), else the one on the last inspection.
+    trailerOn: !!v.pulls_trailer || !!v.trailer,
+    trailerNo: v.trailer?.trailer_number || (li?.trailer_inspected ? li.trailer_number_text || "" : ""),
+    trailerPlate: v.trailer ? v.trailer.plate || "" : li?.trailer_inspected ? li.trailer_plate_text || "" : "",
     damage: [],
     photos: [],
     sig: null,

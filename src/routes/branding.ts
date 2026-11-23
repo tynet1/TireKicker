@@ -3,7 +3,7 @@ import { requireRole } from "../auth.ts";
 import { COLOR_RE, getBranding, logoVersion, publicBranding, saveBranding } from "../branding.ts";
 import type { Branding } from "../branding.ts";
 import { bad, notFound, obj, reqStr } from "../http.ts";
-import { files, imageType, newKey } from "../storage.ts";
+import { discardUnlessUsed, files, imageType, newKey } from "../storage.ts";
 
 export default async function brandingRoutes(app: FastifyInstance) {
   // Public: the sign-in screen needs it before anyone is signed in.
@@ -53,7 +53,7 @@ export default async function brandingRoutes(app: FastifyInstance) {
     try {
       b = await saveBranding({ logo_key: key }, req.user!.id);
     } catch (e) {
-      await files.remove(key).catch(() => {}); // never referenced, safe to drop
+      await discardUnlessUsed(key, async () => (await getBranding()).logo_key === key);
       throw e;
     }
     return publicBranding(b);

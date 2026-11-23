@@ -1,8 +1,8 @@
 // One maintenance entry: the work, repairs it fixed, photos, and its edit history. Shop/admin can edit or void it.
 import { api } from "../api.js";
-import { can, errorHtml, setHeader, stale, state } from "../ui.js";
+import { atLeast, can, errorHtml, setHeader, stale, state } from "../ui.js";
 import { $, esc, fmtDate, fmtMoney, fmtNum, lightbox, modal, toast } from "../util.js";
-import { SECTION_TITLES } from "./common.js";
+import { askTrash, SECTION_TITLES, trashBanner, trashCard } from "./common.js";
 
 const LABELS = {
   service_date: "Date", mileage: "Mileage", work: "Type of work", category: "Type", description: "Work done", parts: "Parts", cost: "Cost",
@@ -30,13 +30,13 @@ export async function render(app, id) {
   }
   if (stale(nav)) return;
   const v = e.vehicle;
-  const editable = can.logService() && !e.voided;
+  const editable = can.logService() && !e.voided && !e.trash;
   setHeader({
     title: `${v.truck_code} · ${fmtDate(e.service_date)}`, sub: e.category_label, back: `#/truck/${v.id}`,
     actions: editable ? [{ label: "Edit", href: `#/service/edit/${e.id}` }] : [],
   });
 
-  let h = "";
+  let h = trashBanner(e.trash);
   if (e.voided) {
     h += `<div class="banner err"><b>Voided</b> ${fmtDate(e.voided.at)}${e.voided.by ? ` by ${esc(e.voided.by)}` : ""}: ${esc(e.voided.reason)}
       <div class="small" style="margin-top:4px">Kept for the record, but it no longer counts for next-due dates or mileage.</div></div>`;
@@ -72,7 +72,10 @@ export async function render(app, id) {
         ${f.active ? "" : `<span class="pill grey">Back on file</span>`}
         ${f.photos.length ? `<div class="row" style="margin-top:4px">${f.photos.map((p) =>
           `<img class="dmgthumb" src="/api/photos/${esc(p.id)}" data-photo="${esc(p.id)}" data-cap="${esc(["Fixed: " + (f.note || "damage"), p.caption].filter(Boolean).join(" — "))}" alt="Photo of the fix">`).join("")}</div>` : ""}
-        <a class="small" href="#/inspection/${esc(f.inspection_id)}">Marked on the ${fmtDate(f.inspection_date)} inspection</a></li>`).join("")}</ul></div>`;
+        ${f.incident_id
+          ? (atLeast("supervisor") ? `<a class="small" href="#/incident/${esc(f.incident_id)}">From the ${fmtDate(f.inspection_date)} incident report</a>`
+            : `<span class="small muted">From an incident on ${fmtDate(f.inspection_date)}</span>`)
+          : `<a class="small" href="#/inspection/${esc(f.inspection_id)}">Marked on the ${fmtDate(f.inspection_date)} inspection</a>`}</li>`).join("")}</ul></div>`;
   }
 
   if (e.photos.length) {
@@ -89,10 +92,16 @@ export async function render(app, id) {
             : "<div>Added photos or repairs</div>"}</li>`).join("")}</ul></details>` : ""}
     ${editable ? `<button class="link danger" id="voidBtn" style="display:block;margin-top:6px">Void this entry</button>` : ""}</div>`;
 
+  const trashNote = e.voided ? "" : "It's voided first, so repairs it fixed open again and damage it fixed goes back on file. ";
+  if (atLeast("admin") && !e.trash) h += trashCard("maintenance entry", trashNote);
+
   app.innerHTML = h;
   app.querySelectorAll("[data-photo]").forEach((b) => (b.onclick = () => lightbox(`/api/photos/${b.dataset.photo}`, b.dataset.cap)));
   const vb = $("#voidBtn");
   if (vb) vb.onclick = () => voidEntry(e, () => render(app, id));
+  app.querySelector("[data-trash]")?.addEventListener("click", async () => {
+    if (await askTrash("service_log", e.id, "maintenance entry", trashNote) && !stale(nav)) location.hash = `#/truck/${v.id}`;
+  });
 }
 
 function voidEntry(e, onDone) {

@@ -1,12 +1,14 @@
 // IndexedDB wrapper for drafts and photo blobs. Falls back to memory if IndexedDB is unavailable
 // (then drafts won't survive closing the browser, and the app says so).
 //
-// Version 2 adds the "svc" store (maintenance entry drafts). Upgrading only creates missing
-// stores, so inspection drafts and photos saved by version 1 are kept.
+// Version 2 adds the "svc" store (maintenance entry drafts), version 3 the "yard" store (yard walk drafts),
+// version 4 the "equip" store (equipment check drafts), version 5 the "esvc" store (equipment maintenance drafts),
+// version 6 the "incident" store (incident report drafts).
+// Upgrading only creates missing stores, so drafts and photos saved by older versions are kept.
 
 const DB_NAME = "tirekicker";
-const DB_VERSION = 2;
-const STORES = { drafts: "vehicleId", blobs: "id", svc: "key" };
+const DB_VERSION = 6;
+const STORES = { drafts: "vehicleId", blobs: "id", svc: "key", yard: "key", equip: "key", esvc: "key", incident: "key" };
 
 let dbp = null;
 let memory = null; // { drafts: Map, blobs: Map, svc: Map } when IndexedDB can't be used
@@ -30,7 +32,7 @@ function open() {
     r.onblocked = () => console.warn("IndexedDB upgrade is waiting for another tab of this app to close");
   }).catch((e) => {
     console.warn("IndexedDB unavailable, keeping drafts in memory only", e);
-    memory = { drafts: new Map(), blobs: new Map(), svc: new Map() };
+    memory = { drafts: new Map(), blobs: new Map(), svc: new Map(), yard: new Map(), equip: new Map(), esvc: new Map(), incident: new Map() };
     return null;
   });
   return dbp;

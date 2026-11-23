@@ -160,12 +160,17 @@ function applyAuto() {
   if (added) toast(`Ticked ${added} matching repair${added > 1 ? "s" : ""}. Untick any you didn't fix.`, 3500);
 }
 
-/** Came from a repair ticket's "Log fix": tick its repairs that are still open, and name the ticket in the notes. */
+/** Came from a repair ticket's "Log fix": tick its repairs (and incident damage) still open, and name the ticket in the notes. */
 function startFixTicket(t) {
   if (t.vehicle_id !== ctx.vehicle.id || t.voided) return;
   const open = new Set(openRepairs().map((r) => r.id));
+  const openDmg = new Set(openDamage().map((m) => m.id));
   let n = 0;
   for (const it of t.items) {
+    if (it.kind === "damage") {
+      if (openDmg.has(it.id) && !d.damage.includes(it.id)) { d.damage.push(it.id); n++; }
+      continue;
+    }
     if (!open.has(it.id) || d.repairs.includes(it.id)) continue;
     d.repairs.push(it.id);
     d.autoRepairs = (d.autoRepairs || []).filter((id) => id !== it.id);

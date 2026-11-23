@@ -14,8 +14,8 @@ export function serviceRow(s, { showTruck = false } = {}) {
     </span></a>`;
 }
 
-/** Supervisor marks a repair item as fixed. Resolves true when saved. */
-export function resolveRepair(itemId, label) {
+/** Supervisor marks a repair item (or, with `path`, a yard finding) as fixed. Resolves true when saved. */
+export function resolveRepair(itemId, label, path = `/inspection-items/${itemId}/resolve`) {
   return new Promise((resolve) => {
     const m = modal(`<h3>Mark repair resolved</h3>
       <p class="muted" style="margin-top:-6px">${esc(label)}</p>
@@ -32,7 +32,7 @@ export function resolveRepair(itemId, label) {
       if (!note) { m.querySelector("#rerr").innerHTML = `<div class="banner err">Add a short note about the fix.</div>`; return; }
       e.target.disabled = true;
       try {
-        await api(`/inspection-items/${itemId}/resolve`, { method: "POST", body: { note } });
+        await api(path, { method: "POST", body: { note } });
         m.remove();
         toast("Repair marked resolved ✓");
         resolve(true);
@@ -80,4 +80,53 @@ export function inspectionRow(i, { showTruck = true } = {}) {
     <span class="row" style="justify-content:flex-end">${inspectionPills(i)}</span></a>`;
 }
 
-export const SECTION_TITLES = { exterior: "Exterior", interior: "Interior", trailer: "Trailer & crew" };
+export const SECTION_TITLES = { exterior: "Exterior", interior: "Interior", trailer: "Trailer & crew", incident: "Incident damage" };
+
+// ---------- The trash (Admin → Trash) ----------
+
+export const TRASH_DAYS = 7;
+
+/** "In the trash" banner for a record, from a detail endpoint's `trash` (empty when it isn't in the trash). */
+export function trashBanner(t) {
+  if (!t) return "";
+  return `<div class="banner err" style="margin-top:14px"><b>In the trash</b> since ${fmtDate(t.deleted_at)} by ${esc(t.deleted_by_name)}: ${esc(t.reason)}.
+    It's out of the lists. An admin can restore it in Admin → Trash, or delete it forever there from ${fmtDate(t.ready_at)}.</div>`;
+}
+
+/** An admin's Delete card for the bottom of a record's screen. `note` says what else happens (or ""). */
+export function trashCard(what, note = "") {
+  return `<h2>Delete</h2><div class="card"><p class="small muted" style="margin:0 0 10px">Delete puts this ${esc(what)} in the trash
+      (Admin → Trash), out of every list. ${note}It can be restored there; after ${TRASH_DAYS} days an admin can delete it forever.</p>
+    <button class="secondary danger" data-trash>Delete this ${esc(what)}</button></div>`;
+}
+
+/** Ask why, then put the record in the trash. Resolves true once it's there. */
+export function askTrash(kind, id, what, note = "") {
+  return new Promise((resolve) => {
+    const m = modal(`<h3>Delete this ${esc(what)}?</h3>
+      <p class="muted" style="margin-top:-6px">It goes in the trash (Admin → Trash) and out of every list. ${esc(note)}
+        Nothing is erased yet: it can be restored, and only after ${TRASH_DAYS} days can an admin delete it forever.</p>
+      <label class="f" for="trReason">Why is it being deleted?</label>
+      <textarea class="t" id="trReason" maxlength="500" placeholder="e.g. Test record, or filed on the wrong truck"></textarea>
+      <div id="trErr"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        <button class="secondary" data-c>Cancel</button><button class="primary btn-danger" data-y>Delete</button></div>`);
+    const ta = m.querySelector("#trReason");
+    ta.focus();
+    m.querySelector("[data-c]").onclick = () => { m.remove(); resolve(false); };
+    m.querySelector("[data-y]").onclick = async (e) => {
+      const reason = ta.value.trim();
+      if (!reason) { m.querySelector("#trErr").innerHTML = `<div class="banner err">Say why it's being deleted.</div>`; return; }
+      e.target.disabled = true;
+      try {
+        await api("/admin/trash", { method: "POST", body: { kind, id, reason } });
+        m.remove();
+        toast("Moved to the trash ✓");
+        resolve(true);
+      } catch (err) {
+        e.target.disabled = false;
+        m.querySelector("#trErr").innerHTML = `<div class="banner err">${esc(err.status === 0 ? "No signal, so nothing changed." : err.message)}</div>`;
+      }
+    };
+  });
+}

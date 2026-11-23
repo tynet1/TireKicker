@@ -5,7 +5,7 @@ import { getBranding } from "./branding.ts";
 import { dataUrl, esc, fmtDate, safeRead } from "./pdf.ts";
 import type { Ticket } from "./routes/tickets.ts";
 
-const SECTION: Record<string, string> = { exterior: "Exterior", interior: "Interior", trailer: "Trailer & crew" };
+const SECTION: Record<string, string> = { exterior: "Exterior", interior: "Interior", trailer: "Trailer & crew", incident: "Incident damage" };
 
 /** "Fixed 11/17/2026 by Robin (maintenance log): New bulb". A maintenance entry's note already starts "Fixed (…)". */
 function fixedLine(it: Ticket["items"][number]): string {

@@ -32,7 +32,7 @@ function stateSection(i) {
   return `<h2>Archive or delete</h2><div class="card">
     ${b.length ? `<div class="row">${b.join("")}</div>` : ""}
     ${i.state === "active" && b.length ? `<p class="small muted" style="margin:10px 0 0">Archive hides it from the lists and takes its repairs and damage off the truck; un-archive brings them back.${
-      isAdmin ? " Delete is for inspections that should never have existed; it can be restored from Admin → Deleted." : ""}</p>` : ""}
+      isAdmin ? " Delete is for inspections that should never have existed; it goes in Admin → Trash, where it can be restored." : ""}</p>` : ""}
     ${hist.length ? `<ul class="statehist">${hist.map((x) => `<li>${ACTION_PAST[x.action] || esc(x.action)} ${fmtDate(x.changed_at)} by ${esc(x.changed_by_name)}${
       x.reason ? `: ${esc(x.reason)}` : ""}</li>`).join("")}</ul>` : ""}</div>`;
 }
@@ -56,8 +56,8 @@ function changeState(i, action) {
     },
     delete: {
       title: "Delete this inspection?",
-      body: `For inspections that should never have existed (wrong truck, a duplicate, a test). Nothing is erased: it moves to
-        Admin → Deleted and can be restored there.${what ? ` <b>${what} will come off ${esc(truck)}'s page.</b>` : ""}`,
+      body: `For inspections that should never have existed (wrong truck, a duplicate, a test). Nothing is erased yet: it goes in
+        Admin → Trash and can be restored there. After 7 days in the trash an admin can delete it forever.${what ? ` <b>${what} will come off ${esc(truck)}'s page.</b>` : ""}`,
       reason: "Why is it being deleted?", required: true, ok: "Delete", danger: true,
     },
     restore: {
@@ -136,7 +136,7 @@ export async function render(app, id) {
       It's hidden from the lists, and its repairs and damage are off ${esc(v.truck_code)}'s page. It still exports to PDF.</div>`;
   } else if (i.state === "deleted") {
     h += `<div class="banner err"><b>Deleted</b> ${fmtDate(si?.changed_at)}${si?.changed_by_name ? ` by ${esc(si.changed_by_name)}` : ""}${si?.reason ? `: ${esc(si.reason)}` : ""}.
-      Nothing was erased: it's listed under Admin → Deleted and can be restored there.</div>`;
+      It's in Admin → Trash: it can be restored there, or deleted forever ${fmtDate(new Date(new Date(si?.changed_at).getTime() + 7 * 864e5).toISOString())} or later.</div>`;
   }
   if (i.mileage_flagged) {
     h += `<div class="banner info"><b>Mileage check:</b> ${fmtNum(i.mileage)} is lower than the previous ${fmtNum(i.previous_mileage)}.

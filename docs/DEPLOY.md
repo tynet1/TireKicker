@@ -92,7 +92,9 @@ The `backup` service runs every night after `BACKUP_HOUR` (default 2am, local `T
 - `db_YYYY-MM-DD_HHMMSS.dump`: full database (`pg_dump` custom format)
 - `uploads_YYYY-MM-DD_HHMMSS.tar.gz`: all photos, signatures and uploaded diagrams
 
-Files older than `BACKUP_KEEP_DAYS` (default 30) are deleted, but only after a new backup succeeded. Point `BACKUP_DIR`
+Files older than `BACKUP_KEEP_DAYS` (default 30) are deleted, but only after a new backup succeeded. That is also how
+long a record deleted forever in Admin → Trash can still be found: restoring a backup from before it was deleted brings
+it back (with everything else in that backup), and after `BACKUP_KEEP_DAYS` it's gone from the backups too. Point `BACKUP_DIR`
 at a second disk or a mounted network share, and copy backups off the server regularly; a backup on the same disk as
 the data doesn't survive losing that disk. Each file is written under a temporary name and renamed when complete, an
 existing backup is never overwritten, and only one backup runs at a time, so a file with a final name is always a

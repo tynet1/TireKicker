@@ -7,7 +7,8 @@ import {
   bad, conflict, DATE_RE, HttpError, idParam, int, isValidDate, notFound, obj, reqStr, str, UUID_RE, uuidParam,
 } from "../http.ts";
 import { renderInspectionPdf } from "../pdf.ts";
-import { decodePngDataUrl, files, newKey } from "../storage.ts";
+import { decodePngDataUrl, discardUnlessUsed, files, newKey } from "../storage.ts";
+import { attachFailed, isUnattached, OWNER_COLUMNS, UNATTACHED } from "../photo-owners.ts";
 
 type Section = "exterior" | "interior" | "trailer";
 
@@ -184,13 +185,13 @@ export async function submitInspection(input: SubmitInput, userId: number) {
     if (p.checklist_item_id != null && !answered.has(p.checklist_item_id)) throw bad("Photo points at a checklist item that isn't in this inspection.");
   }
 
-  // Photos must already be uploaded (by this user) and not attached to anything yet.
+  // Photos must already be uploaded and not attached to anything yet. (Whoever is signed in on the phone may send them:
+  // a shared phone's queue can go out under the next person to sign in. Photo ids are random and known only to that phone.)
   if (input.photos.length) {
     const ids = input.photos.map((p) => p.id);
     const found = await q(
-      `SELECT id, inspection_id, service_log_id, damage_repair_id, registration_change_id, uploaded_by FROM photos WHERE id = ANY($1::uuid[])`, [ids]);
-    const ok = new Set(found.filter((f) => f.inspection_id == null && f.service_log_id == null && f.damage_repair_id == null
-      && f.registration_change_id == null && f.uploaded_by === userId).map((f) => f.id));
+      `SELECT id, uploaded_by, ${OWNER_COLUMNS} FROM photos WHERE id = ANY($1::uuid[])`, [ids]);
+    const ok = new Set(found.filter((f) => isUnattached(f)).map((f) => f.id));
     const notReady = ids.filter((id) => !ok.has(id));
     if (notReady.length) {
       throw new HttpError(422, "Some photos haven't finished uploading yet.", { code: "photos_missing", photos: notReady });
@@ -233,7 +234,7 @@ export async function submitInspection(input: SubmitInput, userId: number) {
       return { id, mileage_flagged: ins.rows[0].mileage_flagged as boolean, duplicate: false };
     });
   } catch (e) {
-    await files.remove(sigKey).catch(() => {});
+    await discardUnlessUsed(sigKey, async () => !!(await one(`SELECT 1 FROM inspections WHERE employee_signature_path = $1`, [sigKey])));
     if (e instanceof DuplicateSubmit) {
       const d = await existingByClientId(input.client_id);
       if (d) return { ...d, duplicate: true };
@@ -271,11 +272,11 @@ async function insertChildren(c: PoolClient, id: string, input: SubmitInput, che
   for (const p of input.photos) {
     const r = await c.query(
       `UPDATE photos SET inspection_id = $2, caption = $3, damage_mark_id = $4, inspection_item_id = $5
-        WHERE id = $1 AND inspection_id IS NULL AND service_log_id IS NULL AND damage_repair_id IS NULL AND registration_change_id IS NULL`,
+        WHERE id = $1 AND ${UNATTACHED}`,
       [p.id, id, p.caption, p.damage_key ? markIds.get(p.damage_key) ?? null : null,
         p.checklist_item_id ? itemIds.get(p.checklist_item_id) ?? null : null],
     );
-    if (r.rowCount !== 1) throw conflict("A photo was attached to another inspection. Remove it and try again.");
+    if (r.rowCount !== 1) throw await attachFailed(c, p.id, "A photo was attached to another inspection. Remove it and try again.");
   }
 }
 
@@ -292,7 +293,7 @@ const TRANSITIONS: Record<StateAction, { from: InspectionState[]; to: Inspection
 const ALREADY: Record<InspectionState, string> = {
   active: "This inspection isn't archived or deleted.",
   archived: "This inspection is already archived.",
-  deleted: "This inspection is deleted. Restore it first (Admin → Deleted).",
+  deleted: "This inspection is deleted. Restore it first (Admin → Trash).",
 };
 
 /**
@@ -424,7 +425,7 @@ export default async function inspectionRoutes(app: FastifyInstance) {
       where.push(`i.inspection_date ${op} $${params.length}::date`);
     }
     // Archived and deleted inspections are left out unless asked for: archived=only (just archived ones) or
-    // archived=include (live and archived). Deleted ones are only listed under Admin → Deleted.
+    // archived=include (live and archived). Deleted ones are only listed under Admin → Trash.
     const st = "COALESCE(st.state, 'active')";
     if (qs.archived === "only") where.push(`${st} = 'archived'`);
     else if (qs.archived === "include") where.push(`${st} IN ('active', 'archived')`);
@@ -549,7 +550,7 @@ export default async function inspectionRoutes(app: FastifyInstance) {
   app.post("/inspections/:id/restore", { preHandler: requireRole("admin") }, async (req) =>
     changeInspectionState(uuidParam(req.params), "restore", req.user!.id, null));
 
-  // Admin → Deleted: everything deleted, newest first, ready to restore.
+  // Deleted inspections (older copies of the app's Admin → Deleted tab; Admin → Trash lists everything now).
   app.get("/admin/deleted-inspections", { preHandler: requireRole("admin") }, async () =>
     q(`SELECT i.id, i.vehicle_id, v.truck_code, i.inspection_date, i.inspector_name, i.mileage, i.status,
               s.reason, s.changed_at AS deleted_at, u.name AS deleted_by_name

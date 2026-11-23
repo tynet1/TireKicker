@@ -6,6 +6,8 @@ import type { PoolClient } from "pg";
 import { requireRole } from "../auth.ts";
 import { one, q, tx } from "../db.ts";
 import { bad, conflict, HttpError, idParam, int, isValidDate, notFound, obj, reqStr, str, UUID_RE } from "../http.ts";
+import { attachFailed, isUnattached, OWNER_COLUMNS, UNATTACHED } from "../photo-owners.ts";
+import { trashInfo } from "./trash.ts";
 
 export const CATEGORIES: Record<string, string> = {
   oil_change: "Oil change",
@@ -70,7 +72,7 @@ function optDate(v: unknown, label: string): string | null {
   return s;
 }
 
-function money(v: unknown): number | null {
+export function money(v: unknown): number | null {
   if (v == null || v === "") return null;
   const s = String(v).replace(/[$,\s]/g, "");
   if (!/^\d{1,7}(\.\d{1,2})?$/.test(s)) throw bad("Cost must be an amount like 125.50.");
@@ -166,16 +168,15 @@ function photoList(v: unknown): EntryPhoto[] {
   });
 }
 
-/** Photos must be uploaded by this user and not attached anywhere else (or already on this entry). */
-async function checkPhotos(photos: { id: string }[], userId: number, entryId: number | null) {
+/** Photos must be uploaded and not attached anywhere else (or already on this entry). */
+async function checkPhotos(photos: { id: string }[], entryId: number | null) {
   if (!photos.length) return;
   const ids = photos.map((p) => p.id);
   const found = await q(
-    `SELECT id, inspection_id, service_log_id, damage_repair_id, registration_change_id, uploaded_by FROM photos WHERE id = ANY($1::uuid[])`, [ids]);
+    `SELECT id, uploaded_by, ${OWNER_COLUMNS} FROM photos WHERE id = ANY($1::uuid[])`, [ids]);
   const ok = new Set(found
-    .filter((f) => f.inspection_id == null && (f.service_log_id == null
-      ? f.damage_repair_id == null && f.registration_change_id == null && f.uploaded_by === userId
-      : f.service_log_id === entryId))
+    // Free photos (uploaded from the phone, whoever is signed in now), or ones already on this entry (when editing it).
+    .filter((f) => isUnattached(f, ["service_log_id"]) && (f.service_log_id == null || f.service_log_id === entryId))
     .map((f) => f.id));
   const notReady = ids.filter((id) => !ok.has(id));
   if (notReady.length) {
@@ -184,16 +185,16 @@ async function checkPhotos(photos: { id: string }[], userId: number, entryId: nu
 }
 
 /** Attach new photos to the entry; a photo of a fixed damage mark also points at that damage repair. */
-async function attachPhotos(c: PoolClient, entryId: number, photos: EntryPhoto[], userId: number, repairOf = new Map<number, number>()) {
+async function attachPhotos(c: PoolClient, entryId: number, photos: EntryPhoto[], repairOf = new Map<number, number>()) {
   for (const p of photos) {
     const r = await c.query(
-      `UPDATE photos SET service_log_id = $2, caption = $3, damage_repair_id = $5
-        WHERE id = $1 AND uploaded_by = $4 AND inspection_id IS NULL AND service_log_id IS NULL AND damage_repair_id IS NULL AND registration_change_id IS NULL`,
-      [p.id, entryId, p.caption, userId, p.damage_mark_id ? repairOf.get(p.damage_mark_id) ?? null : null],
+      `UPDATE photos SET service_log_id = $2, caption = $3, damage_repair_id = $4
+        WHERE id = $1 AND ${UNATTACHED}`,
+      [p.id, entryId, p.caption, p.damage_mark_id ? repairOf.get(p.damage_mark_id) ?? null : null],
     );
     if (r.rowCount === 1) continue;
     const mine = await c.query(`SELECT 1 FROM photos WHERE id = $1 AND service_log_id = $2`, [p.id, entryId]);
-    if (!mine.rowCount) throw conflict("A photo couldn't be attached. Remove it and add it again.");
+    if (!mine.rowCount) throw await attachFailed(c, p.id, "A photo couldn't be attached. Remove it and add it again.");
   }
 }
 
@@ -252,10 +253,13 @@ async function attachDamage(c: PoolClient, entryId: number, vehicleId: number, m
   if (!todo.length) return mine;
 
   const rows = (await c.query(
-    `SELECT dm.id, i.vehicle_id,
-            EXISTS (SELECT 1 FROM inspection_states s WHERE s.inspection_id = i.id AND s.state <> 'active') AS hidden,
+    `SELECT dm.id, coalesce(i.vehicle_id, n.vehicle_id) AS vehicle_id,
+            EXISTS (SELECT 1 FROM inspection_states s WHERE s.inspection_id = dm.inspection_id AND s.state <> 'active')
+            OR EXISTS (SELECT 1 FROM incident_states s WHERE s.incident_id = dm.incident_id AND s.state <> 'active') AS hidden,
             EXISTS (SELECT 1 FROM damage_repairs r WHERE r.damage_mark_id = dm.id AND r.active) AS repaired
-       FROM damage_marks dm JOIN inspections i ON i.id = dm.inspection_id
+       FROM damage_marks dm
+       LEFT JOIN inspections i ON i.id = dm.inspection_id
+       LEFT JOIN incidents n ON n.id = dm.incident_id
       WHERE dm.id = ANY($1::int[])
       FOR UPDATE OF dm`,
     [todo],
@@ -313,12 +317,13 @@ export async function loadEntry(id: number) {
   const photos = await q(`SELECT id, caption, damage_repair_id FROM photos WHERE service_log_id = $1 ORDER BY created_at, id`, [id]);
   const damageFixes = (await q(
     `SELECT dr.id, dr.damage_mark_id, dr.active, dr.repaired_at, dr.end_reason, dm.note, dm.diagram,
-            i.id AS inspection_id, i.inspection_date
+            dm.inspection_id, dm.incident_id, coalesce(i.inspection_date, n.incident_date) AS inspection_date
        FROM damage_repairs dr
        JOIN damage_marks dm ON dm.id = dr.damage_mark_id
-       JOIN inspections i ON i.id = dm.inspection_id
+       LEFT JOIN inspections i ON i.id = dm.inspection_id
+       LEFT JOIN incidents n ON n.id = dm.incident_id
       WHERE dr.service_log_id = $1
-      ORDER BY i.inspection_date, dm.seq`,
+      ORDER BY coalesce(i.inspection_date, n.incident_date), dm.seq`,
     [id],
   )).map((r) => ({ ...r, photos: photos.filter((p) => p.damage_repair_id === r.id).map(({ damage_repair_id: _d, ...p }) => p) }));
   const hist = await q(
@@ -437,6 +442,33 @@ const withLabel = <T extends Record<string, unknown>>(r: T) => ({ ...r, category
 
 class DuplicateSave extends Error {}
 
+/**
+ * Void an entry, inside the caller's transaction: repairs it closed are reopened and damage it fixed goes back on file.
+ * False when it was already voided (or doesn't exist).
+ */
+export async function voidServiceLog(c: PoolClient, id: number, userId: number, reason: string): Promise<boolean> {
+  const r = await c.query(
+    `UPDATE service_logs SET voided_at = now(), voided_by = $2, void_reason = $3, updated_by = $2
+      WHERE id = $1 AND voided_at IS NULL RETURNING id`,
+    [id, userId, reason],
+  );
+  if (!r.rowCount) return false;
+  await c.query(
+    `UPDATE inspection_items ii SET resolved_at = NULL, resolved_by = NULL, resolution_note = NULL
+       FROM service_log_repairs r
+      WHERE r.service_log_id = $1 AND r.active AND r.resolved_here AND ii.id = r.inspection_item_id`,
+    [id],
+  );
+  await c.query(`UPDATE service_log_repairs SET active = false WHERE service_log_id = $1`, [id]);
+  // Damage it marked repaired goes back on file.
+  await c.query(
+    `UPDATE damage_repairs SET active = false, ended_at = now(), ended_by = $2, end_reason = $3
+      WHERE service_log_id = $1 AND active`,
+    [id, userId, `Maintenance entry voided: ${reason}`.slice(0, 600)],
+  );
+  return true;
+}
+
 export default async function serviceRoutes(app: FastifyInstance) {
   app.get("/service-config", canRead, async () => ({
     categories: Object.entries(CATEGORIES).map(([id, label]) => ({ id, label, auto: AUTO_TICK[id] ?? null })),
@@ -448,7 +480,8 @@ export default async function serviceRoutes(app: FastifyInstance) {
     if (!(await one(`SELECT 1 FROM vehicles WHERE id = $1`, [vid]))) throw notFound("Truck not found.");
     const entries = await q(
       `SELECT ${LIST_COLS} FROM service_logs s JOIN vehicles v ON v.id = s.vehicle_id
-        WHERE s.vehicle_id = $1 ORDER BY s.service_date DESC, s.id DESC LIMIT 500`,
+        WHERE s.vehicle_id = $1 AND NOT EXISTS (SELECT 1 FROM trash tr WHERE tr.kind = 'service_log' AND tr.record_id = s.id::text)
+        ORDER BY s.service_date DESC, s.id DESC LIMIT 500`,
       [vid],
     );
     const current = await one<{ miles: number | null }>(
@@ -500,7 +533,10 @@ export default async function serviceRoutes(app: FastifyInstance) {
     return rows.map(withLabel);
   });
 
-  app.get("/service-logs/:id", canRead, async (req) => loadEntry(idParam(req.params)));
+  app.get("/service-logs/:id", canRead, async (req) => {
+    const id = idParam(req.params);
+    return { ...(await loadEntry(id)), trash: await trashInfo("service_log", id) };
+  });
 
   // New entry. Idempotent on client_id, like inspections, so a retried save never makes a duplicate.
   app.post("/service-logs", canWrite, async (req, reply) => {
@@ -517,7 +553,7 @@ export default async function serviceRoutes(app: FastifyInstance) {
     const repairs = idList(b.repair_item_ids, "repair_item_ids", 100);
     const damage = idList(b.damage_mark_ids, "damage_mark_ids", 50);
     const photos = photoList(b.photos);
-    await checkPhotos(photos, user.id, null);
+    await checkPhotos(photos, null);
 
     try {
       const id = await tx(async (c) => {
@@ -532,7 +568,7 @@ export default async function serviceRoutes(app: FastifyInstance) {
         const newId: number = ins.rows[0].id;
         await attachRepairs(c, newId, vehicleId, repairs, user.id, String(f.description));
         const repairOf = await attachDamage(c, newId, vehicleId, damage, photos, user.id, String(f.description));
-        await attachPhotos(c, newId, photos, user.id, repairOf);
+        await attachPhotos(c, newId, photos, repairOf);
         return newId;
       });
       return reply.code(201).send({ id, duplicate: false });
@@ -555,7 +591,7 @@ export default async function serviceRoutes(app: FastifyInstance) {
     const repairs = idList(b.repair_item_ids, "repair_item_ids", 100);
     const damage = idList(b.damage_mark_ids, "damage_mark_ids", 50);
     const photos = photoList(b.photos);
-    await checkPhotos(photos, user.id, id);
+    await checkPhotos(photos, id);
 
     await tx(async (c) => {
       const cur = (await c.query(`SELECT * FROM service_logs WHERE id = $1 FOR UPDATE`, [id])).rows[0];
@@ -576,40 +612,21 @@ export default async function serviceRoutes(app: FastifyInstance) {
       const work = String(f.description ?? cur.description);
       await attachRepairs(c, id, cur.vehicle_id, repairs, user.id, work);
       const repairOf = await attachDamage(c, id, cur.vehicle_id, damage, photos, user.id, work);
-      await attachPhotos(c, id, photos, user.id, repairOf);
+      await attachPhotos(c, id, photos, repairOf);
     });
     return loadEntry(id);
   });
 
   // Void (never delete). Repairs this entry closed are reopened, and damage it fixed goes back on file.
   app.post("/service-logs/:id/void", canWrite, async (req) => {
-    const user = req.user!;
     const id = idParam(req.params);
     const reason = reqStr(obj(req.body ?? {}).reason, "Reason", 500);
     await tx(async (c) => {
-      const r = await c.query(
-        `UPDATE service_logs SET voided_at = now(), voided_by = $2, void_reason = $3, updated_by = $2
-          WHERE id = $1 AND voided_at IS NULL RETURNING id`,
-        [id, user.id, reason],
-      );
-      if (!r.rowCount) {
+      if (!(await voidServiceLog(c, id, req.user!.id, reason))) {
         const exists = await c.query(`SELECT 1 FROM service_logs WHERE id = $1`, [id]);
         if (!exists.rowCount) throw notFound("Maintenance entry not found.");
         throw conflict("This entry was already voided.");
       }
-      await c.query(
-        `UPDATE inspection_items ii SET resolved_at = NULL, resolved_by = NULL, resolution_note = NULL
-           FROM service_log_repairs r
-          WHERE r.service_log_id = $1 AND r.active AND r.resolved_here AND ii.id = r.inspection_item_id`,
-        [id],
-      );
-      await c.query(`UPDATE service_log_repairs SET active = false WHERE service_log_id = $1`, [id]);
-      // Damage it marked repaired goes back on file.
-      await c.query(
-        `UPDATE damage_repairs SET active = false, ended_at = now(), ended_by = $2, end_reason = $3
-          WHERE service_log_id = $1 AND active`,
-        [id, user.id, `Maintenance entry voided: ${reason}`.slice(0, 600)],
-      );
     });
     return loadEntry(id);
   });

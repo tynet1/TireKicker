@@ -17,9 +17,9 @@ The app moves the same sheet onto a phone and adds damage pins, photos, signatur
 | Role | Who | Can |
 |---|---|---|
 | crew | Crew leads and drivers | Sign in with name + PIN, start or resume an inspection, upload photos, submit |
-| supervisor | Crew supervisors, fleet staff | Everything crew can do, plus review and sign off inspections, mark repairs resolved, export PDFs |
-| shop | Shop manager or mechanic | Everything crew can do, plus log, edit and void maintenance entries, and close repair items; can't sign off inspections or export PDFs |
-| admin | Whoever runs the app | Everything, plus manage trucks, trailers, diagrams, checklist items, users and branding |
+| supervisor | Crew supervisors, fleet staff | Everything crew can do, plus review and sign off inspections, mark repairs resolved, export PDFs, walk yards, check equipment, and file and read incident reports |
+| shop | Shop manager or mechanic | Everything crew can do, plus log, edit and void maintenance entries (trucks and equipment), check equipment, and close repair items; can't sign off inspections or export PDFs |
+| admin | Whoever runs the app | Everything, plus manage trucks, trailers, equipment, diagrams, checklists, users and branding, and the trash |
 
 Crew sign-in has to be fast on a phone in a truck: pick your name, enter a 4–6 digit PIN, and the session stays signed
 in for about 30 days. Supervisors and admins use email + password.
@@ -112,7 +112,7 @@ Crews are on cellular in the field, so phones must reach the server from the int
    instead of red, and each fixed repair links to its entry. Supervisors keep the quick **Resolve** (note only).
 7. **Admin:** trucks (add, edit every header field, retire, pick or upload the body diagram, set the trailer type or
    "no trailer"), trailer types (name + picture), users and PINs, branding (company name, app name, header color, logo),
-   the checklist editor (§9), and deleted inspections.
+   trailers and equipment, the checklist editors for trucks, yards and equipment (§9), and the trash (§4a).
 
 A trailer type is a named trailer diagram. Every inspection records which truck and trailer pictures it was drawn on, so
 changing a truck's diagram or trailer type later never moves old pins.
@@ -121,14 +121,42 @@ changing a truck's diagram or trailer type later never moves old pins.
 
 Losing an inspection, photo or log entry is the worst failure this app can have. Every change is judged against that first.
 
-- Nothing is hard-deleted from the app: trucks, users, diagrams and checklist items are retired, not removed.
+- Nothing is erased by accident or in a hurry. An admin can erase a record on purpose through one guarded path, the
+  trash (020, below); everything else holds: trucks, users, diagrams and checklist items are retired, not removed, and
+  every guard in the database refuses deletes and changes.
+- **The trash and Delete forever (020).** For test records before rollout, mistakes, personal information on request,
+  and records past an age. Admins only.
+  - **Delete puts a record in the trash** (Admin → Trash), never erases it: inspections, incident reports, yard walks,
+    equipment checks, maintenance entries (truck and equipment), repair tickets, and retired trucks and inactive users
+    that have nothing on file. A record in the trash is out of every list and off the truck; Restore puts it back.
+    Maintenance entries and tickets are voided as they go in (as a void always does, a maintenance entry's repairs
+    reopen), and come back voided. A truck or user with any record on file stays retired instead, so their history is
+    never orphaned.
+  - **After 7 days in the trash** an admin can **Delete forever**: the record and everything that is only part of it
+    (checklist answers, damage marks and their repairs, notes, edit history, photos, signature and sketch files).
+    Things that stand on their own stay: a ticket or maintenance entry that listed its repairs just loses those lines,
+    damage a deleted maintenance entry fixed stays repaired (with its photo), and a registration update made at sign-off
+    stays in the truck's history. The screen first shows exactly what will go (worked out by doing it and rolling it
+    back) and asks for the truck number (or the yard, trailer, tag or person's name) to be typed.
+  - **Old records:** Admin → Trash → Move old records to the trash takes every record of the ticked kinds dated before a
+    day (count typed to confirm). They can be restored like any other until deleted forever. **Delete forever all
+    ready** does every record past its 7 days.
+  - **The database enforces it:** every guard still refuses deletes and changes, except inside one transaction started
+    by `gc_begin_purge(kind, id)`, which itself refuses a record that isn't in the trash or hasn't been there 7 days.
+    Files are removed only after that transaction commits, and only if nothing in the database still points at them.
+  - **The log:** each permanent delete is a line in `purge_log` (Admin → Trash → Deleted forever): what kind of record,
+    which truck, its date, why, who put it in the trash and who deleted it forever, and how many rows and files went.
+    Never the record's contents; a user is logged as "User #12 (crew)", without the name. The log can't be changed or
+    erased.
+  - Nightly backups keep 30 days, so a record deleted forever is still in the backups for up to 30 days, then gone.
 - Submitted records are read-only in the database (triggers), and corrections go in notes.
 - The phone keeps a draft until the server confirms it; submits are idempotent; uploads retry.
 - Files are written to a temp file, flushed to disk and renamed, so a crash never leaves a half-written photo.
 - Schema changes only add numbered migrations, each in one transaction.
 - Damage repairs (006) can't be edited or deleted, only ended (undo / voided entry) with who, when and why.
 - The database refuses to delete inspections, their checklist answers and damage marks, and any photo once it's attached
-  (005). "Delete" in the app only marks an inspection deleted; it stays restorable for good, with every change kept as history.
+  (005). "Delete" in the app only marks an inspection deleted (in the trash), restorable, with every change kept as
+  history; only Delete forever (020) erases it.
 - Nightly backups (database + uploads) to a second location. A backup is written to a temp file and renamed only when
   complete, never overwrites an existing backup, and runs one at a time. A restore first saves the current data as a
   `_before-restore` backup, so a wrong restore can be undone. Test a restore before relying on it (docs/DEPLOY.md §5).
@@ -140,6 +168,26 @@ Losing an inspection, photo or log entry is the worst failure this app can have.
 - Repair tickets (010) can't be deleted or changed, only voided once with a reason; the repairs on a ticket never change.
 - Checklist items (011) are retired, never deleted, and every checklist change is kept; editing the checklist never
   changes a submitted inspection or bounces one that's being filled in.
+- Yard walks (012) are read-only once submitted; only a finding's resolution is recorded later. Yards, yard checklist
+  items and their change history can't be deleted, and a walk's photos are protected like any other.
+- Equipment checks (013) are read-only the same way. Trailers, equipment, their change history and the equipment
+  checklist can't be deleted. Which records a photo can belong to is one list (`src/photo-owners.ts`), used by every
+  photo check and the clean-up, so a new kind of record can't leave its photos unprotected.
+- Equipment maintenance entries (014) can only be voided (with a reason), never edited or deleted; voiding reopens the
+  problems the entry closed.
+- Truck status changes (015) are recorded by the database itself for every change, however it's made, and the history
+  can't be edited or deleted. Trailer moves are kept with the other asset changes.
+- From the hardening review (docs/PHASE3-REVIEW.md): trucks, users and truck pictures can't be deleted in the database
+  either (017). A file written for a save that then fails is removed only once the database confirms nothing points at
+  it (the save may have gone through after all). Every photo upload gets its own file name, and a file's folder is
+  flushed after it's written. A photo already uploaded from a phone can be sent by whoever is signed in on it (shared
+  phones), and one cleaned up mid-save is simply uploaded again. The phone's offline cache keeps the newest 400 items,
+  so it can't grow until the browser clears the app's storage. A 60-minute burn-in (30 phones, bad signal, app
+  crashes, database restarts) checks that nothing is lost, duplicated or incomplete: `scripts/burnin.ts`.
+- Incident reports (018) follow the inspection rules: idempotent submit on `client_id`, read-only once filed (the
+  database refuses changes and deletes to the report, its damage marks, notes and who-has-read-it rows), corrections
+  and later facts are notes added with who and when, and archive/delete only changes a state row with history (delete
+  is admin-only with a reason; restore from Admin → Trash). Their photos are attached like any other record's.
 
 ## 5. Business rules
 
@@ -208,7 +256,15 @@ POST /inspections         {client_id, ..., items[], damage[], photo_ids[]}
 GET  /inspections?limit&status&vehicle_id&from&to&archived   (from/to: inclusive dates; archived=only|include, else live only)
 POST /inspections/:id/archive {reason?} · /unarchive          supervisor+
 POST /inspections/:id/delete {reason} · /restore             admin
-GET  /admin/deleted-inspections                               admin
+GET  /admin/deleted-inspections                               admin (older app copies; Admin → Trash uses the routes below)
+GET  /admin/trash                                             admin: everything in the trash, with ready / ready_at / confirm
+POST /admin/trash {kind, id, reason} · /admin/trash/restore {kind, id}       admin (kind: inspection, incident, yard_walk,
+                                 equipment_check, service_log, equipment_service, repair_ticket, vehicle, user)
+POST /admin/trash/preview {kind, id}                          admin: what Delete forever would remove (done, then rolled back)
+POST /admin/trash/purge {kind, id, confirm}                   admin: Delete forever (7+ days in the trash; idempotent)
+POST /admin/trash/purge-ready {confirm} · {more, skip[]}      admin: everything ready, a batch per call
+GET  /admin/old-records?before&kinds · POST /admin/old-records/trash {before, kinds[], reason, confirm}   admin
+GET  /admin/purge-log                                         admin
 POST /damage-marks/:id/repair {client_id, note, photo_ids[]}   supervisor+ (photo required; idempotent)
 POST /vehicles/:id/registration {client_id, expires, was, from: form|sign-off|truck, inspection_id?, note?, photo_ids[]?}
                                  supervisor+; 409 if the date changed since `was`; idempotent; history in GET /vehicles/:id
@@ -240,6 +296,52 @@ PATCH /admin/checklist/:id {label}
 POST /admin/checklist/:id/move {direction: "up" | "down"}
 POST /admin/checklist/:id/retire, /restore
 GET  /form-config also returns as_of; the phone sends it back as checklist_as_of with the inspection.
+/admin/yard-checklist and /admin/equipment-checklist: the same five calls for those checklists.
+
+Yard walks:
+GET  /yards                          -> yards with walked_today, last_date, open_findings     supervisor, shop, admin
+GET  /yard-config                    -> {sections, checklist, as_of}                          supervisor+
+POST /yard-inspections {client_id, yard_id, inspection_date, inspector_name, comments, checklist_as_of, items, photos, signature}
+                                     -> {id, failed} (200 + duplicate on a retry)              supervisor+
+GET  /yards/:id/inspections          -> the yard's walks, newest first                         supervisor, shop, admin
+GET  /yard-inspections/:id           -> walk, items (with resolutions), photos                 supervisor, shop, admin
+GET  /yard-inspections/:id/signature, /pdf (supervisor+)
+GET  /yard-findings                  -> open findings, oldest first                            supervisor, shop, admin
+POST /yard-findings/:id/resolve {note}                                                         supervisor+
+
+Equipment:
+GET  /admin/equipment                -> {types, check_days, trailers, equipment}                admin
+POST /admin/trailers, PATCH /admin/trailers/:id; POST /admin/equipment, PATCH /admin/equipment/:id   admin (moves = trailer_id)
+PUT  /admin/equipment-settings {check_days}                                                     admin
+GET  /equipment                      -> trailers with pieces (last_checked, due, open_problems), unassigned   supervisor, shop, admin
+GET  /equipment/:id                  -> a piece, its history and checks                          supervisor, shop, admin
+GET  /equipment-config/:trailer|none -> {trailer, pieces, sections, checklist, as_of}            supervisor, shop, admin
+POST /equipment-checks {client_id, trailer_id, check_date, checker_name, comments, checklist_as_of, pieces, photos}
+                                     -> {id, failed} (200 + duplicate on a retry)               supervisor, shop, admin
+GET  /equipment-checks?trailer=…, /equipment-checks/:id
+GET  /equipment-findings; POST /equipment-findings/:id/resolve {note}                           supervisor, shop, admin
+GET  /equipment-service-config       -> {work}                                                  supervisor, shop, admin
+GET  /equipment/:id/service          -> {entries, next_due}                                     supervisor, shop, admin
+POST /equipment-service {client_id, equipment_id, service_date, work:[{type, next_due_date}], description, parts, cost,
+     performed_by, vendor, notes, fix_item_ids, photos} -> {id, fixed} (200 + duplicate on a retry)   shop, admin
+GET  /equipment-service/:id; POST /equipment-service/:id/void {reason}                          read: supervisor, shop, admin; void: shop, admin
+
+Fleet, supervisor, shop, admin:
+GET  /fleet-config                   -> {statuses, shop_statuses}
+POST /vehicles/:id/status {status, note}     (the shop: in_service, in_shop, on_hold, trucks in the fleet only)
+GET  /vehicles/:id/status-history
+GET  /trailers; POST /trailers/:id/assign {vehicle_id | null}
+GET  /reminders                      -> {due, soon, items: [{kind, state, title, detail, link}]}
+GET  /vehicles/:id includes vehicle.status and vehicle.trailer.
+
+Incident reports, supervisor and admin:
+GET  /incident-config                -> what the form needs besides the truck (drivers to pick from)
+POST /incidents {client_id, vehicle_id, ...}  (200 + duplicate on a retry)
+GET  /incidents?vehicle_id, /incidents/unread, /incidents/:id; POST /incidents/:id/read
+POST /incidents/:id/notes {note}
+GET  /incidents/:id/file/:which (driver, reporter, sketch) · /incidents/:id/pdf
+POST /incidents/:id/archive · /unarchive (supervisor+) · /delete {reason} · /restore (admin)
+GET  /incident-repairs               -> incident damage not yet repaired (repairs board)   supervisor, shop, admin
 
 Maintenance log:
 GET  /service-config                -> {categories}                          shop, supervisor, admin
@@ -277,8 +379,8 @@ POST /service-logs/:id/void         {reason}                                    
 - **Archive or delete inspections (migration 005):** for mistakes (wrong truck, a duplicate, a test) and for clearing
   old ones out of the lists. **Archive** (supervisor+) hides an inspection from home, truck history, the export list and
   sign-off lists; it still opens from a link or an "Archived" filter and can be un-archived. **Delete** (admin only,
-  reason required) moves it to a **Deleted** list under Admin, where it can be restored; the app never erases it.
-  Archived and deleted inspections' open repairs and damage come off the truck while they're archived or deleted, and
+  reason required) moves it to Admin → Trash, where it can be restored; after 7 days there an admin can delete it
+  forever (§4a, migration 020). Nothing is cleaned up automatically. Archived and deleted inspections' open repairs and damage come off the truck while they're archived or deleted, and
   the Archive confirmation names what will come off. The submitted inspection itself stays read-only: the state lives
   in its own table, with every change kept as history.
 - **Registration expiration (migration 008):** the inspection form, the sign-off screen and the truck page show the
@@ -293,22 +395,61 @@ POST /service-logs/:id/void         {reason}                                    
   email PDF**, **Save PDF** and **Open PDF to print**. The PDF carries branding, the truck (code, VIN, plate, last
   mileage), each problem with its note and photos, and blank lines for the shop (work done, parts, cost, date,
   signature). A ticket's **Log fix** opens a maintenance entry with its still-open repairs ticked. A mistaken ticket is
-  **voided** with a reason: it stays listed, its PDF says VOID, and its repairs stay open.
+  **voided** with a reason: it stays listed, its PDF says VOID, and its repairs stay open. A ticket can also hold damage
+  from an incident report (019), but **only if someone ticks it**: the picker never ticks incident damage for you, so a
+  totaled truck doesn't go to the mechanic by accident.
 - **Checklist editor (migration 011):** Admin → Checklist lists the Exterior, Interior and Trailer & crew items in form
   order. An admin adds an item (at the end of its section), rewords one, moves it up or down, retires it or restores it.
   No two items in use in a section may read the same. Every change is kept with who and when. Changes apply to new
   inspections only: submitted inspections keep the items, wording and order they had. A form already open on a phone
   keeps working: it sends when it loaded the checklist, so the server doesn't demand items added after that and still
-  accepts answers to items retired since (a claimed checklist time counts back at most 90 days).
+  accepts answers to items retired since (a claimed checklist time counts back at most 90 days). The same editor serves
+  the yard walk and equipment checklists.
+- **Yard walks (migration 012):** a supervisor's daily walk of a yard (Menu → Yard walks, or the yard card on the home
+  screen). Yards are a table (one "Main yard" to start; add more). The walk has a date, the inspector, the yard checklist
+  in four sections (Fire safety; Fuel, oil & chemicals; Equipment & charging; Access & security; 12 items to start) with
+  OK / Repair, a note for each Repair, photos, comments and a finger signature. Drafts are saved on the phone and queued
+  like truck inspections. Each Repair is a **finding** that stays open until a supervisor resolves it with a note: on
+  the yard page, the walk, and the top of the repairs board. Supervisors' home screen shows each yard with "Walked
+  today" or "Not walked today" and its open findings. A walk is read-only once submitted and has a PDF.
+- **Equipment checks (migration 013):** Admin → Equipment keeps the trailers (number, description, plate, notes) and
+  the equipment (tag, kind, make, model, serial, trailer, notes). A piece moves by changing its trailer; trailers and
+  pieces are retired, never deleted, and every add, edit, move and retirement is kept. The checklist has an "All
+  equipment" part plus a part per kind (string trimmer, blower, hedge trimmer, edger, chainsaw, pole saw, mower,
+  sprayer, other). The shop or a supervisor checks a trailer at a time: each piece OK / Repair with a note and photos,
+  or "Not here". No signature. Every piece is due every 30 days by default (Admin → Equipment changes it). Problems stay
+  open (equipment page, repairs board, the check) until someone resolves them with a note.
+- **Maintenance log for equipment (migration 014):** on a piece's page, the shop logs work (sharpen blade or chain,
+  trimmer line/head, air filter, spark plug, fuel system, oil change, tune-up, repair, other), each type with an
+  optional next-due date, plus what was done, parts, cost, who or which outside shop, notes, photos, and which of the
+  piece's open problems it fixes. Entries aren't edited: a mistaken one is voided with a reason, which reopens the
+  problems it closed.
+- **Fleet (migration 015):** a truck's **status** (In service, In the shop, On hold, Preparing for return, Returned,
+  Sold, Retired). The shop sets In service / In the shop / On hold; supervisors and admins set any. Returned, Sold and
+  Retired take the truck out of the fleet, and Admin → Trucks' Active switch stays in step. Every change, from
+  anywhere, is recorded by the database with who, when and an optional note. **Trailers on trucks:** a truck pulls one
+  trailer at a time; moves are kept, and the inspection form fills in the truck's trailer. **Reminders** (Menu →
+  Reminders and a home-screen card): registrations expired or within 30 days, truck maintenance due or within two weeks
+  (date or 500 miles), equipment due for a check or maintenance, the yard walk not done today, and trucks not
+  inspected in 35 days.
+- **Incident reports (migration 018):** a supervisor files one from the truck page: when and where (with an optional
+  GPS location), the driver, police, injuries, damage pinned on the truck's picture, other parties, witnesses, what
+  happened, a finger drawing of the scene and a map screenshot, photos, the manager's comments, and driver and manager
+  signatures. Only the date, driver, injuries yes/no, what happened and the manager's name and signature are
+  required. It works offline like the other forms. Damage pins go on the truck's damage on file and count as open
+  repairs until marked repaired or fixed through the maintenance log. Supervisors and admins see new reports on their
+  home screen until they open them; only they can see reports and their photos (reports hold the other party's
+  details). For privacy the driver's home address, birth date, license number and employee ID are never stored. The
+  PDF is one packet: a manager's incident report, a vehicle accident report, the damage diagram, a photograph log,
+  any notes added later, and, when our employee was hurt, an injury report and (if they weren't seen by a clinic) a
+  refusal-of-treatment form to finish by hand.
+- **Trash and Delete forever (migration 020):** see §4a.
+- **Dark mode:** the app follows the phone's light or dark setting, and Menu → Appearance picks Auto, Light or Dark
+  (kept on the phone). Photos, diagrams, signatures and sketches stay on white, like paper; PDFs don't change.
 
 ### Ideas not built yet
 
-- Fleet management: truck status (in service, in the shop, on hold, preparing for return, returned, sold) with history,
-  trailers as their own assets that move between trucks, lease details and a lease-return checklist, and an in-app
-  reminders list (registration, service due, insurance, lease end).
-- Inspections of things other than trucks (a yard, a piece of equipment), each type with its own checklist, built on
-  the checklist editor plus "assets" beyond trucks.
-- Incident reports tied to a truck, feeding its damage on file and repair items.
+- Lease details and a lease-return checklist for trucks, insurance dates, and push notifications to phones.
+- A PDF or CSV of equipment checks and equipment maintenance, and hour meters.
 - Single sign-on (for example Microsoft Entra ID) for supervisors and admins; pulling vehicles and odometers from a
   telematics API.
-- A burn-in test: many simulated phones submitting with bad signal for hours, proving nothing is lost or duplicated.

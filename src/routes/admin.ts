@@ -21,7 +21,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/admin/users", async () =>
     q(`SELECT id, name, email, role, active, (pin_hash IS NOT NULL) AS has_pin, (password_hash IS NOT NULL) AS has_password,
               last_login_at, (locked_until > now()) AS locked
-         FROM users ORDER BY active DESC, lower(name)`));
+         FROM users u WHERE NOT EXISTS (SELECT 1 FROM trash tr WHERE tr.kind = 'user' AND tr.record_id = u.id::text) ORDER BY active DESC, lower(name)`));
 
   async function userFields(b: Record<string, unknown>, creating: boolean) {
     const out: Record<string, unknown> = {};
@@ -68,6 +68,9 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.patch("/admin/users/:id", async (req) => {
     const id = idParam(req.params);
     const f = await userFields(obj(req.body), false);
+    if (await one(`SELECT 1 FROM trash WHERE kind = 'user' AND record_id = $1::text`, [id])) {
+      throw conflict("This user is in the trash. Restore them first (Admin → Trash).");
+    }
     if (id === req.user!.id && (f.active === false || (f.role && f.role !== "admin"))) {
       throw bad("You can't deactivate yourself or remove your own admin role.");
     }
@@ -100,6 +103,7 @@ export default async function adminRoutes(app: FastifyInstance) {
          FROM vehicles v
          LEFT JOIN diagrams d ON d.id = v.diagram_id
          LEFT JOIN diagrams td ON td.id = v.trailer_diagram_id
+        WHERE NOT EXISTS (SELECT 1 FROM trash tr WHERE tr.kind = 'vehicle' AND tr.record_id = v.id::text)
         ORDER BY v.active DESC, v.truck_code`));
 
   const optId = (v: unknown, label: string) => (v === null || v === "" ? null : int(v, label, 1));
@@ -167,12 +171,18 @@ export default async function adminRoutes(app: FastifyInstance) {
       await tx(async (c) => {
         const v = (await c.query(`SELECT registration_expires FROM vehicles WHERE id = $1 FOR UPDATE`, [id])).rows[0];
         if (!v) throw notFound("Truck not found.");
+        if ((await c.query(`SELECT 1 FROM trash WHERE kind = 'vehicle' AND record_id = $1::text`, [id])).rowCount) {
+          throw conflict("This truck is in the trash. Restore it first (Admin → Trash).");
+        }
         if (f.registration_expires !== undefined && f.registration_expires !== v.registration_expires) {
           await c.query(
             `INSERT INTO registration_changes (vehicle_id, previous, expires, changed_by, source) VALUES ($1, $2, $3, $4, 'admin')`,
             [id, v.registration_expires, f.registration_expires, req.user!.id],
           );
         }
+        // Switching a truck off or on changes its status (015); the database records who did it.
+        await c.query(`SELECT set_config('gc.user_id', $1, true), set_config('gc.note', $2, true)`,
+          [String(req.user!.id), f.active === undefined ? "" : "Admin → Trucks"]);
         await c.query(
           `UPDATE vehicles SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(", ")}, updated_at = now() WHERE id = $1`,
           [id, ...Object.values(f)],

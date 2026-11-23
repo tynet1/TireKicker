@@ -20,6 +20,9 @@ services:
   app:
     build: .
     restart: unless-stopped
+    # A small init process as PID 1 cleans up the exited helper processes Chromium leaves behind after PDFs
+    # (Node as PID 1 doesn't, so they'd pile up over months).
+    init: true
     depends_on:
       db:
         condition: service_healthy

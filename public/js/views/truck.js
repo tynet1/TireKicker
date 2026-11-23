@@ -2,11 +2,14 @@
 import { api } from "../api.js";
 import { deleteDraft, deletePhotoBlob, flush, getDraft, sendQueued, storePhotoBlob, uploadPhoto } from "../drafts.js";
 import { flushSvc, getSvcDraft, sendSvc } from "../svc.js";
+import { deleteIncDraft, flushInc, getIncDraft, incKey, sendInc } from "../incq.js";
 import { atLeast, can, errorHtml, setHeader, stale, state } from "../ui.js";
 import { $, confirmBox, esc, fmtDate, fmtNum, lightbox, modal, shrinkImage, toast, uuid, vehicleInfo } from "../util.js";
 import { inspectionRow, repairButtons, resolveRepair, SECTION_TITLES, serviceRow } from "./common.js";
 import { regHistoryHtml, regValue, updateRegistration } from "./registration.js";
 import { makeTicket, openTicket, ticketPills, ticketsSection } from "./tickets.js";
+import { changeStatus, changeTrailer, statusHistoryHtml, statusValue, trailerValue } from "./fleet.js";
+import { incidentRow } from "./incidents.js";
 
 let showAllService = false;
 let showAllDamage = false;
@@ -17,14 +20,17 @@ export async function render(app, id) {
   if (id !== lastTruck) { showAllService = false; showAllDamage = false; lastTruck = id; }
   setHeader({ title: "Truck", back: "#/" });
   app.innerHTML = `<div class="empty">Loading…</div>`;
-  let data, draft, svc, svcDraft, tickets;
+  let data, draft, svc, svcDraft, tickets, statusLog, incidents, incDraft;
   try {
-    [data, draft, svc, svcDraft, tickets] = await Promise.all([
+    [data, draft, svc, svcDraft, tickets, statusLog, incidents, incDraft] = await Promise.all([
       api(`/vehicles/${id}`),
       getDraft(id),
       can.seeService() ? api(`/vehicles/${id}/service`).catch((e) => e) : null,
       getSvcDraft(`new-${id}`).catch(() => null),
       can.seeService() ? api(`/vehicles/${id}/repair-tickets`).catch(() => []) : [],
+      can.seeService() ? api(`/vehicles/${id}/status-history`).catch(() => []) : [],
+      atLeast("supervisor") ? api(`/incidents?vehicle_id=${id}&limit=50`).catch((e) => e) : null,
+      atLeast("supervisor") ? getIncDraft(incKey(id)).catch(() => null) : null,
     ]);
   } catch (e) {
     if (!stale(nav)) app.innerHTML = errorHtml(e);
@@ -43,8 +49,9 @@ export async function render(app, id) {
       <b>Info</b><span>${esc(vehicleInfo(v) || "—")}</span>
       <b>Reg exp.</b>${regValue(v.registration_expires)}
       <b>Last miles</b><span>${v.last_mileage != null ? fmtNum(v.last_mileage) : "—"}</span>
-      <b>Trailer</b><span>${v.pulls_trailer ? esc(v.trailer_type || "Yes") : "None"}</span>
-    </div>${regHistoryHtml(data.registration)}</div>`;
+      <b>Trailer</b>${trailerValue(v)}
+      <b>Status</b>${statusValue(v)}
+    </div>${regHistoryHtml(data.registration)}${statusHistoryHtml(statusLog)}</div>`;
 
   if (draft?.status === "queued") {
     h += `<div class="banner info"><b>Saved on phone, not yet uploaded.</b><br>${esc(draft.lastError || "Uploading…")}.
@@ -57,15 +64,21 @@ export async function render(app, id) {
     h += `<a class="primary wide" style="margin:6px 0 4px" href="#/inspect/${v.id}">Start inspection</a>`;
   }
 
+  if (atLeast("supervisor")) h += incidentButton(v, incDraft);
+
   const who = { canLog: can.logService(), canResolve: atLeast("supervisor") };
-  h += `${can.seeService() && openRepairs.length
-    ? `<div class="h2row"><h2>Open repairs (${openRepairs.length})</h2><button class="link" id="mkTicket">Make repair ticket</button></div>`
-    : `<h2>Open repairs (${openRepairs.length})</h2>`}<div class="card">${openRepairs.length
-    ? `<ul class="repairlist">${openRepairs.map((r) => `<li><div class="spread"><div><b>${esc(r.label)}</b> <span class="small muted">(${esc(SECTION_TITLES[r.section] || r.section)})</span>${ticketPills(r)}
+  // Damage from an incident report is a repair until it's fixed (018); it's also listed under damage on file.
+  const incDamage = (data.damage || []).filter((m) => m.incident_id && !m.repair).reverse();
+  const nOpen = openRepairs.length + incDamage.length;
+  h += `${can.seeService() && nOpen
+    ? `<div class="h2row"><h2>Open repairs (${nOpen})</h2><button class="link" id="mkTicket">Make repair ticket</button></div>`
+    : `<h2>Open repairs (${nOpen})</h2>`}<div class="card">${nOpen
+    ? `<ul class="repairlist">${incDamage.map((m) => incidentDamageItem(v, m)).join("")}${openRepairs.map((r) => `<li><div class="spread"><div><b>${esc(r.label)}</b> <span class="small muted">(${esc(SECTION_TITLES[r.section] || r.section)})</span>${ticketPills(r)}
         ${r.note ? `<div>${esc(r.note)}</div>` : ""}<a class="small" href="#/inspection/${esc(r.inspection_id)}">From ${fmtDate(r.inspection_date)} inspection</a></div>
         ${repairButtons(r, v.id, who)}</div></li>`).join("")}</ul>`
     : `<span class="muted">No open repairs.</span>`}</div>`;
   h += ticketsSection(tickets || []);
+  if (incidents) h += incidentsSection(v, incidents);
   h += damageSection(v, data.damage || []);
   if (svc) h += serviceSection(v, svc, svcDraft);
   h += `${atLeast("supervisor") && history.length
@@ -86,6 +99,16 @@ export async function render(app, id) {
     flush();
     if (!stale(nav)) render(app, id);
   };
+  const sb = app.querySelector("[data-status]");
+  if (sb) sb.onclick = async () => {
+    const st = await changeStatus(v);
+    if (!st || stale(nav)) return;
+    // Out of the fleet: the truck page is for trucks in it, so go home.
+    if (["returned", "sold", "retired"].includes(st)) location.hash = "#/";
+    else render(app, id);
+  };
+  const tb = app.querySelector("[data-trailer]");
+  if (tb) tb.onclick = async () => { if ((await changeTrailer(v)) && !stale(nav)) render(app, id); };
   const ru = app.querySelector("[data-regupd]");
   if (ru) ru.onclick = async () => {
     if ((await updateRegistration(v, { from: "truck" })) && !stale(nav)) render(app, id);
@@ -102,7 +125,9 @@ export async function render(app, id) {
   }));
   const mk = $("#mkTicket");
   if (mk) mk.onclick = async () => {
-    const tid = await makeTicket(v, openRepairs);
+    const incDmg = (data.damage || []).filter((m) => m.incident_id && !m.repair)
+      .map((m) => ({ id: m.id, diagram: m.diagram, n: m.n, note: m.note, date: m.inspection_date, ticket_ids: m.ticket_ids }));
+    const tid = await makeTicket(v, openRepairs, { damage: incDmg });
     if (tid && !stale(nav)) { render(app, id); openTicket(tid); }
   };
   app.querySelectorAll("[data-ticket]").forEach((b) => (b.onclick = async () => {
@@ -134,6 +159,23 @@ export async function render(app, id) {
     const m = data.damage.find((x) => x.repair?.id === Number(b.dataset.dmgundo));
     if (m && (await undoRepaired(m)) && !stale(nav)) render(app, id);
   }));
+  const is = $("#incSend");
+  if (is) is.onclick = async () => {
+    is.disabled = true;
+    is.innerHTML = `<span class="spinner"></span> Sending…`;
+    const r = await sendInc(incKey(v.id));
+    if (r.state === "sent") { toast("Incident report uploaded ✓"); location.hash = `#/incident/${r.res.id}`; return; }
+    if (r.state === "waiting") toast("Still no connection to the server. It will keep trying.");
+    flushInc();
+    if (!stale(nav)) render(app, id);
+  };
+  const idc = $("#incDiscard");
+  if (idc) idc.onclick = async () => {
+    if (!(await confirmBox(`Discard the draft incident report for ${v.truck_code}? This can't be undone.`, "Discard", { danger: true }))) return;
+    await deleteIncDraft(incDraft);
+    toast("Draft discarded");
+    render(app, id);
+  };
   const ss = $("#svcSend");
   if (ss) ss.onclick = async () => {
     ss.disabled = true;
@@ -170,7 +212,7 @@ function damageSection(v, damage) {
     const newest = [...list].reverse();
     const shown = showAllDamage ? newest : newest.slice(0, 5);
     const label = (m) => `${kind === "trailer" ? "Trailer damage" : "Damage"} ${m.n}${m.note ? `: ${m.note}` : ""}`;
-    const marked = (m) => `<a href="#/inspection/${esc(m.inspection_id)}">Marked ${fmtDate(m.inspection_date)}</a>${
+    const marked = (m) => `${markedLink(m)}${
       kind === "trailer" && m.trailer_number ? ` · trailer ${esc(m.trailer_number)}` : ""}`;
     const btns = (m) => {
       const b = [];
@@ -205,8 +247,48 @@ function damageSection(v, damage) {
     ? parts.join("") : `<span class="muted">No damage marked on any inspection yet.</span>`}</div>`;
 }
 
+/** Where a damage mark came from: its inspection, or its incident report (supervisors open those; others see the date). */
+function markedLink(m) {
+  if (m.incident_id) {
+    return atLeast("supervisor")
+      ? `<a href="#/incident/${esc(m.incident_id)}">From the ${fmtDate(m.inspection_date)} incident</a>`
+      : `From an incident on ${fmtDate(m.inspection_date)}`;
+  }
+  return `<a href="#/inspection/${esc(m.inspection_id)}">Marked ${fmtDate(m.inspection_date)}</a>`;
+}
+
+/** Incident damage in the open repairs list, with the same buttons as on file. */
+function incidentDamageItem(v, m) {
+  const b = [];
+  if (can.logService()) b.push(`<a class="secondary" href="#/service/new/${v.id}?fixdmg=${m.id}">Log fix</a>`);
+  if (atLeast("supervisor")) b.push(`<button class="secondary" data-dmgfix="${m.id}">Mark repaired</button>`);
+  return `<li><div class="spread"><div><b>${m.diagram === "trailer" ? "Trailer damage" : "Damage"}: ${esc(m.note || "(no description)")}</b>
+      <span class="pill warn">Incident</span>${ticketPills(m)}
+      <div class="small">${markedLink(m)}</div></div>${b.length ? `<div class="btncol">${b.join("")}</div>` : ""}</div></li>`;
+}
+
+/** Supervisors: report an incident, or the draft / queued report for this truck. */
+function incidentButton(v, dr) {
+  if (dr?.status === "queued") {
+    return `<div class="banner info"><b>Incident report saved on phone, not yet uploaded.</b><br>${esc(dr.lastError || "Uploading…")}.
+      It will send by itself when signal returns.<div style="margin-top:8px"><button class="secondary" id="incSend">Try upload now</button></div></div>`;
+  }
+  if (dr) {
+    return `${dr.lastError ? `<div class="banner err"><b>The server didn't accept the incident report:</b> ${esc(dr.lastError)} Open the draft to fix it.</div>` : ""}
+      <a class="secondary wide" style="margin:6px 0 4px" href="#/incident/new/${v.id}">Resume incident report draft</a>
+      <button class="link danger" id="incDiscard" style="width:100%">Discard incident draft</button>`;
+  }
+  return `<a class="secondary wide" style="margin:6px 0 4px" href="#/incident/new/${v.id}">Report incident</a>`;
+}
+
+function incidentsSection(v, list) {
+  if (list instanceof Error) return `<h2>Incident reports</h2>${errorHtml(list)}`;
+  if (!list.length) return "";
+  return `<h2>Incident reports (${list.length})</h2><div class="card list">${list.map((n) => incidentRow(n, { showTruck: false })).join("")}</div>`;
+}
+
 /** Supervisor: mark damage repaired. A note and a photo of the fixed area are required. Resolves true once saved. */
-function markRepaired(m) {
+export function markRepaired(m) {
   return new Promise((resolve) => {
     const clientId = uuid();
     let photo = null; // { id, url }

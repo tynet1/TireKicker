@@ -57,6 +57,11 @@ class LocalFileStore implements FileStore {
       await rm(tmp, { force: true }).catch(() => {});
       throw e;
     }
+    // Flush the folder too, so the new name itself survives a power cut (Linux; Windows can't open a folder this way).
+    try {
+      const dir = await open(dirname(p), "r");
+      try { await dir.sync(); } finally { await dir.close(); }
+    } catch { /* not supported here */ }
   }
   read(key: string): Promise<Buffer> {
     return readFile(this.path(key));
@@ -75,6 +80,20 @@ class LocalFileStore implements FileStore {
 }
 
 export const files: FileStore = new LocalFileStore(config.uploadDir);
+
+/**
+ * Remove a file written for a save that then failed, unless the save went through after all: the connection can drop
+ * after the database committed but before it said so. `used` asks the database whether anything points at the file;
+ * if that can't be answered (database down), the file stays. A spare file costs a few KB; a missing one loses a signature.
+ */
+export async function discardUnlessUsed(key: string, used: () => Promise<boolean>): Promise<void> {
+  try {
+    if (await used()) return;
+  } catch {
+    return;
+  }
+  await files.remove(key).catch(() => {});
+}
 
 /** Sniff the real image type from the first bytes; never trust the client's content-type. */
 export function imageType(buf: Buffer): { ext: "jpg" | "png"; mime: string } | null {

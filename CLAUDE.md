@@ -28,14 +28,24 @@ npm run user -- add --name "X" --role crew --pin 1234
 
 ## Working rules
 
-- **Never lose data.** Read SPEC §4a before changing anything that stores, moves or deletes data. No hard deletes
-  from the app (retire instead), writes are atomic, migrations are additive.
-- Phone-first. Test every screen at 390×844 (iPhone) and 820×1180 (iPad). Touch targets at least 44px. Numeric keypad for mileage.
+- **Never lose data.** Read SPEC §4a before changing anything that stores, moves or deletes data. Writes are atomic,
+  migrations are additive, and the app never hard-deletes except through the trash (migration 020,
+  `src/routes/trash.ts`): Delete puts a record in the trash, and only an admin's Delete forever, 7+ days later, erases
+  it (in one transaction started by `gc_begin_purge`, logged in `purge_log`). A new kind of record that should be
+  deletable gets a trash kind, a purger and a live view/filter there; a new guard function must let `gc_purging()` through.
+- Photos can belong to many kinds of records; `src/photo-owners.ts` is the one list of photo owners. Add a new owner
+  there and in the database's photo guard functions.
+- Phone-first. Test every screen at 390×844 (iPhone) and 820×1180 (iPad), in light and dark mode. Touch targets at least
+  44px. Numeric keypad for mileage. Colors come from the CSS variables in `public/css/app.css` (dark ones under
+  `:root[data-theme="dark"]`, set by `public/js/theme.js`); don't hard-code a background or text color.
 - Expect bad cell signal. Drafts live on the device, uploads retry, and submits are idempotent via `client_id`.
 - Submitted inspections are read-only (enforced by database triggers); corrections go in the supervisor note.
-  They can't be deleted either: archive/delete lives in `inspection_states` (migration 005). Anything that means "counts for the
+  Archive/delete lives in `inspection_states` (migration 005). Anything that means "counts for the
   truck" (open repairs, damage on file, last inspection, mileage, lists) reads `live_inspections`, not `inspections`; a
-  migration that adds an inspections column must recreate that view if it's needed there.
+  migration that adds an inspections column must recreate that view if it's needed there. Same for `live_incidents`,
+  `live_yard_inspections` and `live_equipment_checks` (020); other records in the trash are filtered by the `trash` table.
+- Rerun `scripts/burnin.ts` (many simulated phones on a flaky connection) after any change to how records, photos or
+  the phones' outboxes are saved; see `docs/PHASE3-REVIEW.md`.
 - Every state-changing `/api` call needs the `x-gc-app: 1` header (CSRF guard); `public/js/api.js` adds it.
 - Everything runs with `docker compose up -d`. Secrets go in `.env` (never committed); `.env.example` documents them.
   Local dev settings go in `.env.local` (also gitignored), so they never collide with a server's `.env`.

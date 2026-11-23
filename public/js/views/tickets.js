@@ -2,9 +2,9 @@
 // or an outside vendor; see a truck's tickets; share, save or print a ticket's PDF; log its fix; void a mistaken one.
 // Making or voiding a ticket needs signal (like a registration update): it isn't queued on the phone.
 import { api, apiFile } from "../api.js";
-import { can } from "../ui.js";
+import { atLeast, can } from "../ui.js";
 import { esc, fmtDate, modal, saveBlob, toast, uuid } from "../util.js";
-import { SECTION_TITLES } from "./common.js";
+import { askTrash, SECTION_TITLES } from "./common.js";
 
 export const ticketNumber = (id) => `RT-${String(id).padStart(4, "0")}`;
 const noSignal = "No signal, so nothing was saved. Try again when you have signal.";
@@ -16,20 +16,30 @@ export function ticketPills(r) {
 
 /**
  * Pick repairs and make a ticket. `repairs` are the truck's open repairs; `picked` (ids) start ticked, else all do.
+ * `damage` is its incident damage not yet repaired ({ id, diagram, seq or n, note, date, ticket_ids }): listed after the
+ * repairs and never ticked unless it's in `pickedDamage` (a totaled truck mustn't go to the mechanic by accident).
  * Resolves the new ticket's id, or null if cancelled.
  */
-export async function makeTicket(vehicle, repairs, picked = null) {
+export async function makeTicket(vehicle, repairs, { picked = null, damage = [], pickedDamage = [] } = {}) {
   const sentTo = await api("/repair-tickets/sent-to").catch(() => []);
   return new Promise((resolve) => {
-    const on = new Set(picked?.length ? picked : repairs.map((r) => r.id));
+    const on = new Set(picked ? picked : repairs.map((r) => r.id));
+    const onDmg = new Set(pickedDamage);
+    const dmgName = (m) => (m.diagram === "trailer" ? "Trailer damage" : "Damage");
     const clientId = uuid(); // one per dialog: a retry after a dropped answer can't make a second ticket
     const m = modal(`<h3>Repair ticket for ${esc(vehicle.truck_code)}</h3>
       <p class="muted small" style="margin-top:-8px">Tick the repairs to send. The ticket is a PDF you can print, share or email.</p>
-      <div class="card list" style="margin:0 0 10px">${repairs.map((r) => `<label class="pick">
+      ${repairs.length ? `<div class="card list" style="margin:0 0 10px">${repairs.map((r) => `<label class="pick">
         <input type="checkbox" data-item="${r.id}"${on.has(r.id) ? " checked" : ""}>
         <span class="grow"><b>${esc(r.label)}</b> <span class="small muted">(${esc(SECTION_TITLES[r.section] || r.section)})</span>${ticketPills(r)}
           ${r.note ? `<div class="small">${esc(r.note)}</div>` : ""}
-          <div class="small muted">Reported ${fmtDate(r.inspection_date)}</div></span></label>`).join("")}</div>
+          <div class="small muted">Reported ${fmtDate(r.inspection_date)}</div></span></label>`).join("")}</div>` : ""}
+      ${damage.length ? `<div class="small" style="font-weight:650;margin:4px 2px 2px">Incident damage</div>
+      <p class="small muted" style="margin:0 2px 6px">Not ticked: tick it only if the truck is being repaired (not if it's totaled).</p>
+      <div class="card list" style="margin:0 0 10px">${damage.map((m) => `<label class="pick">
+        <input type="checkbox" data-dmg="${m.id}"${onDmg.has(m.id) ? " checked" : ""}>
+        <span class="grow"><b>${esc(dmgName(m))}${m.note ? `: ${esc(m.note)}` : ""}</b>${ticketPills(m)}
+          <div class="small muted">From the ${fmtDate(m.date)} incident</div></span></label>`).join("")}</div>` : ""}
       <label class="f" for="tk-to">Sent to <span class="muted">(optional)</span></label>
       <input class="t" id="tk-to" maxlength="120" list="tk-to-list" placeholder="e.g. Main St Garage, Corner Tire" autocomplete="off">
       <datalist id="tk-to-list">${sentTo.map((s) => `<option value="${esc(s)}">`).join("")}</datalist>
@@ -41,8 +51,9 @@ export async function makeTicket(vehicle, repairs, picked = null) {
     const go = m.querySelector("[data-y]");
     const err = (msg) => { m.querySelector("#tk-err").innerHTML = msg ? `<div class="banner err">${esc(msg)}</div>` : ""; };
     const ticked = () => [...m.querySelectorAll("[data-item]")].filter((c) => c.checked).map((c) => Number(c.dataset.item));
+    const tickedDmg = () => [...m.querySelectorAll("[data-dmg]")].filter((c) => c.checked).map((c) => Number(c.dataset.dmg));
     const count = () => {
-      const n = ticked().length;
+      const n = ticked().length + tickedDmg().length;
       go.textContent = n ? `Make ticket (${n})` : "Make ticket";
       go.disabled = !n;
     };
@@ -51,7 +62,8 @@ export async function makeTicket(vehicle, repairs, picked = null) {
     m.querySelector("[data-c]").onclick = () => { m.remove(); resolve(null); };
     go.onclick = async () => {
       const items = ticked();
-      if (!items.length) return err("Tick at least one repair.");
+      const dmg = tickedDmg();
+      if (!items.length && !dmg.length) return err("Tick at least one repair.");
       err("");
       go.disabled = true;
       go.innerHTML = `<span class="spinner"></span>`;
@@ -59,7 +71,7 @@ export async function makeTicket(vehicle, repairs, picked = null) {
         const res = await api("/repair-tickets", {
           method: "POST",
           body: {
-            client_id: clientId, vehicle_id: vehicle.id, item_ids: items,
+            client_id: clientId, vehicle_id: vehicle.id, item_ids: items, damage_ids: dmg,
             sent_to: m.querySelector("#tk-to").value.trim() || null, note: m.querySelector("#tk-note").value.trim() || null,
           },
         });
@@ -115,12 +127,17 @@ export async function openTicket(id) {
       <div style="display:grid;gap:10px;margin-top:10px">
         ${!t.voided && open.length && can.logService() ? `<a class="secondary" href="#/service/new/${t.vehicle_id}?ticket=${t.id}" data-close>Log fix (${open.length} open)</a>` : ""}
         ${t.voided ? "" : `<button class="secondary danger" id="tk-void">Void this ticket</button>`}
+        ${atLeast("admin") && !t.trash ? `<button class="secondary danger" id="tk-trash">Delete this ticket</button>` : ""}
         <button class="secondary" data-close>Close</button>
       </div>`);
     const close = (changed) => { m.remove(); resolve(changed); };
     m.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => close(false)));
     const v = m.querySelector("#tk-void");
     if (v) v.onclick = async () => { if (await voidTicket(t)) close(true); };
+    const del = m.querySelector("#tk-trash");
+    if (del) del.onclick = async () => {
+      if (await askTrash("repair_ticket", t.id, "ticket", t.voided ? "" : "It's voided first. ")) close(true);
+    };
     pdfButtons(m.querySelector("#tk-pdf"), t);
   });
 }
