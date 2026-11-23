@@ -27,9 +27,10 @@ whose notes are that version's section of `CHANGELOG.md`.
 If it fails after the image was pushed, fix the problem and release the next patch version; don't move a tag that
 people may already have pulled.
 
-## One-time setup
+## Notes
 
-- The first image is published as a private package. On GitHub, open the profile's **Packages → tirekicker →
-  Package settings** and set its visibility to **Public**, so installs can pull it without signing in.
-- The update check in Admin → About (from 0.3.0) reads `https://api.github.com/repos/tynet1/TireKicker/releases/latest`, so every
-  release must be published as a GitHub Release (the workflow does that), not just a tag.
+- The image package is linked to this public repository and is public, so installs pull it without signing in. In a
+  fork, check the first image under the profile's **Packages → tirekicker → Package settings**; if it came out
+  private, set it to Public there.
+- The update check in Admin → About (from 0.3.0) reads `https://api.github.com/repos/tynet1/TireKicker/releases/latest`,
+  so every release must be published as a GitHub Release (the workflow does that), not just a tag.
